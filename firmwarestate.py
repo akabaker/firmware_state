@@ -3,6 +3,7 @@ from elementtree import ElementTree
 from subprocess import Popen, PIPE
 from urllib2 import urlopen, URLError, HTTPError
 from socket import gethostname
+from string import Template
 import yaml
 import re
 
@@ -60,21 +61,21 @@ class Omreport:
 
 def notify(om, yaml_data, mail_config):
 
+	tmpl = Template('-$item out of date, system version: $sys_ver -- latest version: $latest_ver \n')
 	msg = "%s: \n" % (om.hostname)
+
 	for error in om.errors:
 		if 'bios' in error:
-			msg += '	%s out of date, system version: %s -- latest version: %s\n' \
-			% ('BIOS', om.bios_ver, yaml_data['bios']) 	
+			msg += tmpl.substitute(item='BIOS', sys_ver=om.bios_ver, latest_ver=yaml_data['bios'])	
 		if 'perc' in error:
-			msg += '	%s out of date, system version: %s -- latest version: %s\n' \
-			% (om.perc_name, om.perc_ver, yaml_data['percs'][om.perc_name])	
-	
+			msg += tmpl.substitute(item=om.perc_name, sys_ver=om.perc_ver, latest_ver=yaml_data['percs'][om.perc_name])	
+
 	mail = Popen('mail -s %s %s' % (mail_config['subject'], mail_config['to']), stdin=PIPE, shell=True)
 	mail.communicate(msg)[0]
 
 def main(types, mail_config):
 	"""
-	@param: dict that contains the name of controller type	
+	Params: dict that contains the name of controller type, dict containing mail configuration
 	Gather omreport data and compare to yaml data corresponding to this machines model
 
 	"""
