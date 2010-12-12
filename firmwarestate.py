@@ -63,10 +63,10 @@ def notify(om, yaml_data, mail_config):
 	msg = "%s: \n" % (om.hostname)
 	for error in om.errors:
 		if 'bios' in error:
-			msg += '	%s out of date, system version: %s -- current version: %s\n' \
+			msg += '	%s out of date, system version: %s -- latest version: %s\n' \
 			% ('BIOS', om.bios_ver, yaml_data['bios']) 	
 		if 'perc' in error:
-			msg += '	%s out of date, system version: %s -- current version: %s\n' \
+			msg += '	%s out of date, system version: %s -- latest version: %s\n' \
 			% (om.perc_name, om.perc_ver, yaml_data['percs'][om.perc_name])	
 	
 	mail = Popen('mail -s %s %s' % (mail_config['subject'], mail_config['to']), stdin=PIPE, shell=True)
