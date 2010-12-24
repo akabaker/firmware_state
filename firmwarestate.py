@@ -3,7 +3,8 @@ from elementtree import ElementTree
 from subprocess import Popen, PIPE
 from urllib2 import urlopen, URLError, HTTPError
 from socket import gethostname
-from string import Template
+from email import MIMEMultipart, MIMEText
+import smtplib
 import yaml
 import re
 
@@ -26,26 +27,28 @@ class Omreport:
 		
 	def _system_xml(self, report):
 		"""
+
 		Call omreport and storage output as an element tree
 		@param: Report is a string, command line options for omreport
 
 		"""
 
 		try:
-			output = Popen('omreport %s -fmt xml' % (report), stdout=PIPE, shell=True).communicate()[0]
+			output = Popen('/opt/dell/srvadmin/bin/omreport %s -fmt xml' % (report), stdout=PIPE, shell=True).communicate()[0]
 		except OSError, e:
 			print "Execution failure: %s" % (e)
 			return
 		try:
 			root = ElementTree.fromstring(output)
 			tree = ElementTree.ElementTree(root)
-		except ExpatError, e:
-			print "ExpatError: %s" % (e)
+		except Exception, e:
+			print "Exception: %s" % (e)
 			return
 		return tree
 	
 	def _system_model(self):
 		"""
+
 		Use facter to determine productname, i.e., r710, 2950 ,etc
 
 		"""
@@ -57,35 +60,42 @@ class Omreport:
 			return
 		return output.strip()
 
-##########
-
 def notify(om, yaml_data, mail_config):
 
-	tmpl = Template('-$item out of date, system version: $sys_ver -- latest version: $latest_ver \n')
-	msg = "%s: \n" % (om.hostname)
+	tmpl = '-%s out of date, system version: %s -- latest version: %s <br>'
+	msg = "<strong>%s</strong>: <br>" % (om.hostname)
 
-	for error in om.errors:
-		if 'bios' in error:
-			msg += tmpl.substitute(item='BIOS', sys_ver=om.bios_ver, latest_ver=yaml_data['bios'])	
-		if 'perc' in error:
-			msg += tmpl.substitute(item=om.perc_name, sys_ver=om.perc_ver, latest_ver=yaml_data['percs'][om.perc_name])	
+	if 'bios' in om.errors:
+		msg += (tmpl) % ('BIOS', om.bios_ver, yaml_data['bios'])
 
-	mail = Popen('mail -s %s %s' % (mail_config['subject'], mail_config['to']), stdin=PIPE, shell=True)
-	mail.communicate(msg)[0]
+	if 'perc' in om.errors:
+		for (key, val) in om.outofdate.items():
+			msg += (tmpl) % (key, val, yaml_data['percs'][key])
+
+	message = MIMEMultipart.MIMEMultipart('alternative')
+	message['from'] = mail_config['from']
+	message['to'] =  mail_config['to']
+	message['subject'] = mail_config['subject']
+	body = MIMEText.MIMEText(msg, 'html')
+	message.attach(body)
+	s = smtplib.SMTP('localhost')
+	s.sendmail(message['from'], message['to'], message.as_string())
+	s.quit()
 
 def main(types, mail_config):
 	"""
+
 	Params: dict that contains the name of controller type, dict containing mail configuration
 	Gather omreport data and compare to yaml data corresponding to this machines model
 
 	"""
 
 	om = Omreport()
-	#om.model = '2950'
 	om.errors = []
+	om.percs = {}
+	om.outofdate = {}
 	pattern = re.compile(r'%s' % (types['controller']), re.I)
 	url = "http://rhn.missouri.edu/pub/dell-yaml/%s.yaml" % (om.model)
-
 	try:
 		req = urlopen(url)
 	except URLError, e:
@@ -94,20 +104,20 @@ def main(types, mail_config):
 		print ("HTTPError: %s") % (e)
 
 	yaml_data = yaml.load(req)
-
 	# Gather PERC name and firmware version
-	for node in om.storage_tree.findall('//Name'):
-		if pattern.search(node.text):
-			om.perc_name = node.text
-			om.perc_ver = om.storage_tree.find('//FirmwareVer').text
-	
+	for node in om.storage_tree.findall('//DCStorageObject'):
+		perc_name = node.find('Name').text
+		perc_ver = node.find('FirmwareVer').text
+		om.percs[perc_name] = perc_ver
+
 	# BIOS version is easy
 	om.bios_ver = om.system_tree.find('//SystemBIOS/Version').text
 	
 	# Compare with yaml_data
-	if om.perc_name in yaml_data['percs']:
-		if om.perc_ver < yaml_data['percs'][om.perc_name]:
+	for perc_name, version in om.percs.items():
+		if version < yaml_data['percs'][perc_name]:
 			om.errors.append('perc')
+			om.outofdate[perc_name] = version
 
 	if om.bios_ver < yaml_data['bios']:
 		om.errors.append('bios')
@@ -119,6 +129,7 @@ if __name__ == "__main__":
 	types = {'controller': 'perc'}
 	mail_config = {
 		'subject': 'Firmware_report',
-		'to': 'bakerlu@missouri.edu'
+		'to': 'bakerlu@missouri.edu',
+		'from': 'root@%s' % (gethostname()),
 	}
 	main(types, mail_config)
